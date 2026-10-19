@@ -15,7 +15,6 @@ DENTEX diagnosis содержит боксы 4 классов:
         valid/images + valid/masks
         test/images  + test/masks
 """
-
 from __future__ import annotations
 
 import argparse
@@ -29,7 +28,6 @@ from datasets import load_dataset
 ROOT = Path(__file__).resolve().parents[1]
 DATASET_DIR = ROOT / "data" / "pathology"
 
-# Классы патологий (как в DENTEX diagnosis)
 CLASS_NAMES = {
     0: "impacted",
     1: "caries",
@@ -53,7 +51,6 @@ def _clear_split(folder: str) -> None:
 
 
 def _box_to_mask(mask: np.ndarray, bbox: list, class_id: int) -> None:
-    """Закрашиваем прямоугольник бокса значением class_id + 1 (0 = фон)."""
     x, y, w, h = [int(round(v)) for v in bbox]
     height, width = mask.shape
 
@@ -66,52 +63,41 @@ def _box_to_mask(mask: np.ndarray, bbox: list, class_id: int) -> None:
         mask[y1:y2, x1:x2] = class_id + 1  # 0 = background
 
 
+def _get_category_id(cat) -> int | None:
+    if isinstance(cat, int):
+        return cat if cat in CLASS_NAMES else None
+
+    name = str(cat).lower().strip()
+    mapping = {
+        "impacted": 0,
+        "caries": 1,
+        "periapical lesion": 2,
+        "periapical": 2,
+        "deep caries": 3,
+        "deep_caries": 3,
+    }
+    return mapping.get(name)
+
+
 def _write_sample(image_dir: Path, mask_dir: Path, row: dict, image_id: str) -> int:
     image = row["image"]
     width, height = image.size
-
-    # Маска: 0 = фон, 1..4 = классы патологий
     mask = np.zeros((height, width), dtype=np.uint8)
 
     objects = row.get("objects", {})
     bboxes = objects.get("bbox", [])
-    categories = objects.get("category", [])  # или category_id в зависимости от версии
-
-    # Подстраиваемся под возможные названия полей
-    if not categories:
-        categories = objects.get("category_id", [])
-    if not categories:
-        categories = objects.get("diagnosis", [])
+    categories = objects.get("category", objects.get("category_id", objects.get("diagnosis", [])))
 
     count = 0
     for bbox, cat in zip(bboxes, categories):
-        try:
-            class_id = int(cat)
-        except (TypeError, ValueError):
-            # Иногда приходит строка
-            name = str(cat).lower()
-            mapping = {
-                "impacted": 0,
-                "caries": 1,
-                "periapical lesion": 2,
-                "periapical": 2,
-                "deep caries": 3,
-                "deep_caries": 3,
-            }
-            class_id = mapping.get(name)
-            if class_id is None:
-                continue
-
-        if class_id not in CLASS_NAMES:
+        class_id = _get_category_id(cat)
+        if class_id is None:
             continue
-
         _box_to_mask(mask, bbox, class_id)
         count += 1
 
-    # Сохраняем
     image.save(image_dir / f"{image_id}.jpg", format="JPEG", quality=95)
     Image.fromarray(mask).save(mask_dir / f"{image_id}.png")
-
     return count
 
 
@@ -145,26 +131,16 @@ def prepare(force: bool = False) -> None:
         print(f"Датасет уже есть в {DATASET_DIR}. Для пересборки: --force")
         return
 
-    print("Качаю DENTEX diagnosis с Hugging Face...")
-    # Пробуем разные возможные названия конфига
-    try:
-        dataset = load_dataset("ibrahimhamamci/DENTEX", "diagnosis")
-    except Exception:
-        try:
-            dataset = load_dataset("tirandazdylan/dentex-panoramic", "diagnosis")
-        except Exception:
-            dataset = load_dataset("ibrahimhamamci/DENTEX")
+    print("Качаю DENTEX diagnosis...")
+    dataset = load_dataset("tirandazdylan/dentex-panoramic", "diagnosis")
 
-    print("Доступные сплиты:", list(dataset.keys()))
+    print("Сплиты:", list(dataset.keys()))
 
     total = 0
     for split_name in ("train", "validation", "test"):
         if split_name in dataset:
             total += _write_split(split_name, dataset[split_name])
-        else:
-            print(f"  Сплит {split_name} отсутствует, пропускаю")
 
-    # Сохраняем описание классов
     classes_path = DATASET_DIR / "classes.txt"
     classes_path.write_text(
         "\n".join(f"{i} {name}" for i, name in CLASS_NAMES.items()) + "\n",
@@ -173,12 +149,12 @@ def prepare(force: bool = False) -> None:
 
     print(f"\nГотово. Всего патологий: {total}")
     print(f"Классы: {CLASS_NAMES}")
-    print(f"Данные лежат в: {DATASET_DIR}")
+    print(f"Данные: {DATASET_DIR}")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Подготовка датасета патологий для U-Net")
-    parser.add_argument("--force", action="store_true", help="перезаписать уже скачанные данные")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
     prepare(force=args.force)
 
