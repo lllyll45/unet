@@ -8,5 +8,5 @@ pip install -r requirements.txt
 
 ```bash
 python scripts/prepare_dataset.py
-python scripts/train.py --epochs 40 --batch 4 --lr 1e-4
+python scripts/sweep.py
 ```
