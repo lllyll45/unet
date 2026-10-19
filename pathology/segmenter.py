@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import albumentations as A
+import cv2
 import numpy as np
 import segmentation_models_pytorch as smp
 import torch
@@ -16,6 +17,7 @@ from albumentations.pytorch import ToTensorV2
 from PIL import Image
 
 NUM_CLASSES = 5
+CLASS_NAMES = {0: "background", 1: "impacted", 2: "caries", 3: "periapical", 4: "deep_caries"}
 
 
 class Segmenter:
@@ -77,3 +79,53 @@ class Segmenter:
         max_prob = probs.max(axis=-1)
         mask[max_prob < conf] = 0
         return mask
+
+    def predict_lesions(
+        self,
+        image_path: str | Path,
+        conf: float = 0.5,
+        min_area: int = 50,
+    ) -> list[dict]:
+        """Вернуть список областей-патологий с координатами и классом.
+
+        Это то, что нужно агрегатору: маска HxW разбивается на связные
+        компоненты (blobs), и каждая область описывается словарём:
+
+            class_id    — 1..4
+            class_name  — impacted / caries / periapical / deep_caries
+            bbox        — [x, y, w, h] в пикселях исходного снимка
+            area        — площадь области в пикселях
+            centroid    — [cx, cy] центр области
+            mean_prob   — средняя вероятность класса по пикселям области
+            mask        — bool HxW, точная форма области (для overlap-проверки)
+
+        min_area отбрасывает мелкие шумовые пятна: на 512x512 область
+        меньше 50 px — это, как правило, артефакт, а не патология.
+        """
+        image = Path(image_path)
+        probs = self.predict_proba(image)
+        mask = probs.argmax(axis=-1).astype(np.uint8)
+        max_prob = probs.max(axis=-1)
+        mask[max_prob < conf] = 0
+
+        lesions: list[dict] = []
+        for class_id in range(1, NUM_CLASSES):
+            binary = (mask == class_id).astype(np.uint8)
+            if binary.sum() == 0:
+                continue
+            n, labels, stats, centroids = cv2.connectedComponentsWithStats(binary, connectivity=8)
+            for i in range(1, n):  # 0 — фон
+                x, y, w, h, area = (int(v) for v in stats[i])
+                if area < min_area:
+                    continue
+                component_mask = labels == i
+                lesions.append({
+                    "class_id": class_id,
+                    "class_name": CLASS_NAMES[class_id],
+                    "bbox": [x, y, w, h],
+                    "area": area,
+                    "centroid": [float(centroids[i][0]), float(centroids[i][1])],
+                    "mean_prob": float(probs[..., class_id][component_mask].mean()),
+                    "mask": component_mask,
+                })
+        return lesions
