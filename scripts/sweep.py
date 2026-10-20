@@ -43,7 +43,7 @@ EXPERIMENTS = (
     {"name": "r34_512_lr3e4", "encoder": "resnet34", "imgsz": 512, "batch": 4, "lr": 3e-4},
     {"name": "r34_512_lr1e5", "encoder": "resnet34", "imgsz": 512, "batch": 4, "lr": 1e-5},
     {"name": "r34_384_lr1e4", "encoder": "resnet34", "imgsz": 384, "batch": 4, "lr": 1e-4},
-    {"name": "mbv2_512_lr1e4", "encoder": "mobilenet_v2", "imgsz": 512, "batch": 8, "lr": 1e-4},
+    {"name": "mbv2_512_lr1e4", "encoder": "mobilenet_v2", "imgsz": 512, "batch": 4, "lr": 1e-4},
 )
 
 COLUMNS = ("name", "encoder", "imgsz", "batch", "lr", "epoch", "val_loss", "weights", "status")
@@ -53,7 +53,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Перебор нескольких настроек обучения U-Net")
     parser.add_argument("--epochs", type=int, default=40)
     parser.add_argument("--patience", type=int, default=10)
-    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--device", default="cuda", help="cuda — видеокарта, cpu — без GPU")
     parser.add_argument("--workers", type=int, default=0)
     parser.add_argument("--only", default="", help="имя одного варианта, например r34_512_lr1e4")
     parser.add_argument("--force", action="store_true", help="переобучить даже если веса уже есть")
@@ -193,8 +193,17 @@ def main() -> None:
         raise SystemExit(
             "Нет data/pathology/train/images. Сначала запустите scripts/prepare_dataset.py"
         )
+    print(f"Device: {args.device}")
     if args.device == "cpu":
         print("ВНИМАНИЕ: sweep на CPU идёт очень долго. Используйте GPU или --epochs 5.")
+    elif not torch.cuda.is_available():
+        raise SystemExit(
+            "Видеокарта не видна: в окружении стоит PyTorch без CUDA. "
+            "Переустановите зависимости:\n"
+            r".venv\Scripts\python.exe -m pip install -r requirements.txt"
+        )
+    else:
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
 
     selected = [item for item in EXPERIMENTS if not args.only or item["name"] == args.only]
     if not selected:

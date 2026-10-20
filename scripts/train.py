@@ -44,7 +44,7 @@ BEST_MODEL = ROOT / "best_model" / "pathology_unet_resnet34.pth"
 RUNS_DIR = ROOT / "runs" / "segment"
 
 NUM_CLASSES = 5  # 0 = background + 4 патологии
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DEVICE = "cuda"
 CLASS_NAMES = {0: "background", 1: "impacted", 2: "caries", 3: "periapical", 4: "deep_caries"}
 
 
@@ -171,8 +171,9 @@ def train_once(
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_epoch = epoch
-            torch.save(model.state_dict(), run_dir / "weights" / "best.pth" if (run_dir / "weights").exists()
-                       else (run_dir.mkdir(parents=True, exist_ok=True) or (run_dir / "weights").mkdir(exist_ok=True) or run_dir / "weights" / "best.pth"))
+            weights_dir = run_dir / "weights"
+            weights_dir.mkdir(parents=True, exist_ok=True)
+            torch.save(model.state_dict(), weights_dir / "best.pth")
             print(f"  → сохранены веса эпохи {epoch} (val_loss={val_loss:.4f})")
             epochs_without_improvement = 0
         else:
@@ -197,7 +198,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--batch", type=int, default=4)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--patience", type=int, default=10, help="ранняя остановка, если val_loss не падает")
-    parser.add_argument("--device", default=DEVICE)
+    parser.add_argument("--device", default=DEVICE, help="cuda — видеокарта, cpu — без GPU")
     parser.add_argument("--workers", type=int, default=0)
     parser.add_argument("--name", default="pathology", help="имя папки прогона в runs/segment")
     return parser.parse_args()
@@ -212,6 +213,15 @@ def main() -> None:
         )
 
     print(f"Device: {args.device}")
+    if args.device != "cpu" and not torch.cuda.is_available():
+        raise SystemExit(
+            "Видеокарта не видна: в окружении стоит PyTorch без CUDA. "
+            "Переустановите зависимости:\n"
+            r".venv\Scripts\python.exe -m pip install -r requirements.txt"
+        )
+    if args.device != "cpu":
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
+
     best = train_once(
         encoder=args.encoder,
         imgsz=args.imgsz,

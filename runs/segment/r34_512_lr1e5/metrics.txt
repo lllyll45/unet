@@ -1,0 +1,6 @@
+encoder=resnet34
+imgsz=512
+batch=4
+lr=1e-05
+best_epoch=40
+best_val_loss=0.309818

@@ -1,0 +1,6 @@
+name,encoder,imgsz,batch,lr,epoch,val_loss,weights,status
+r34_512_lr1e4,resnet34,512,4,0.0001,9,0.156969,E:\мои документы\Питон проекты\Univer\RO\tooth_detector\unet\weights\candidates\r34_512_lr1e4.pth,ok
+r34_512_lr3e4,resnet34,512,4,0.0003,14,0.146576,E:\мои документы\Питон проекты\Univer\RO\tooth_detector\unet\weights\candidates\r34_512_lr3e4.pth,ok
+r34_512_lr1e5,resnet34,512,4,1e-05,40,0.309818,E:\мои документы\Питон проекты\Univer\RO\tooth_detector\unet\weights\candidates\r34_512_lr1e5.pth,ok
+r34_384_lr1e4,resnet34,384,4,0.0001,11,0.158280,E:\мои документы\Питон проекты\Univer\RO\tooth_detector\unet\weights\candidates\r34_384_lr1e4.pth,ok
+mbv2_512_lr1e4,mobilenet_v2,512,4,0.0001,14,0.159757,E:\мои документы\Питон проекты\Univer\RO\tooth_detector\unet\weights\candidates\mbv2_512_lr1e4.pth,ok
