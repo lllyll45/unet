@@ -92,11 +92,11 @@ def _parse_args() -> argparse.Namespace:
 
 def _colorize(mask: np.ndarray) -> np.ndarray:
     palette = np.array([
-        [0, 0, 0],
-        [220, 60, 60],
-        [60, 200, 60],
-        [60, 60, 220],
-        [220, 200, 60],
+        [0, 0, 0],        # 0 background
+        [220, 60, 60],    # 1 impacted
+        [60, 200, 60],    # 2 caries
+        [60, 60, 220],    # 3 periapical
+        [220, 200, 60],   # 4 deep_caries
     ], dtype=np.uint8)
     return palette[mask]
 
@@ -124,9 +124,6 @@ def main() -> None:
     iou_sum = np.zeros(NUM_CLASSES)
     count = 0
 
-    PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
-    previews_left = args.preview
-
     with torch.no_grad():
         for images, masks in tqdm(loader, desc="test"):
             images = images.to(args.device)
@@ -151,17 +148,24 @@ def main() -> None:
     print(f"macro IoU  (без фона): {np.nanmean(iou_mean[1:]):.4f}")
     print()
 
-    # Превью: оригинал + предсказанная маска (цветная)
+    # Превью: оригинал + предсказанная маска (цветная), с ресайзом обратно
+    PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
     with torch.no_grad():
         for idx, (img_path, original) in enumerate(dataset.original[: args.preview]):
             tensor = dataset.transform(image=original)["image"].unsqueeze(0).to(args.device)
             pred = model(tensor).argmax(dim=1).squeeze(0).cpu().numpy().astype(np.uint8)
-            color = _colorize(pred)
+
+            # Вернуть маску к размеру оригинала.
+            # NEAREST — обязательно: маска содержит id классов (0..4),
+            # BILINEAR дал бы дробные значения, которых нет в палитре.
+            pred_img = Image.fromarray(pred).resize(
+                (original.shape[1], original.shape[0]), Image.NEAREST
+            )
+            pred_full = np.array(pred_img)
+
+            color = _colorize(pred_full)
             out = (0.6 * original + 0.4 * color).astype(np.uint8)
             Image.fromarray(out).save(PREVIEW_DIR / f"{img_path.stem}_overlay.png")
-            previews_left -= 1
-            if previews_left <= 0:
-                break
 
     print(f"Превью масок: {PREVIEW_DIR}")
 

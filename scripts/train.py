@@ -19,6 +19,11 @@
 
 На CPU (без NVIDIA GPU) обучение идёт очень долго. Для realistic-результата
 нужна видеокарта или облако. Если видеопамяти мало, уменьшите --batch.
+
+Вторая итерация: обучение с Dice Loss для поднятия редких классов (periapical,
+deep_caries). Запуск:
+
+    .venv\\Scripts\\python.exe scripts\\train.py --loss ce_dice --lr 3e-4 --name dice_loss
 """
 
 from __future__ import annotations
@@ -90,6 +95,29 @@ def get_transforms(train: bool = True, imgsz: int = 512):
     ])
 
 
+class CombinedLoss(nn.Module):
+    """CrossEntropy + Dice Loss.
+
+    CE хорошо работает на частых классах, но «топит» редкие.
+    Dice напрямую оптимизирует перекрытие и лучше вытягивает редкие классы.
+    Комбинация даёт стабильность CE и чувствительность Dice к дисбалансу.
+    """
+
+    def __init__(self, mode: str = "ce_dice"):
+        super().__init__()
+        self.mode = mode
+        self.ce = nn.CrossEntropyLoss()
+        self.dice = smp.losses.DiceLoss(mode="multiclass")
+
+    def forward(self, pred, target):
+        if self.mode == "ce":
+            return self.ce(pred, target)
+        if self.mode == "dice":
+            return self.dice(pred, target)
+        # ce_dice (по умолчанию)
+        return self.ce(pred, target) + self.dice(pred, target)
+
+
 def train_one_epoch(model, loader, optimizer, criterion, device):
     model.train()
     total_loss = 0.0
@@ -130,6 +158,7 @@ def train_once(
     device: str,
     workers: int,
     name: str,
+    loss_mode: str = "ce_dice",
 ) -> Path:
     """Обучить одну модель. Вернуть путь к best.pth этого прогона.
 
@@ -150,12 +179,13 @@ def train_once(
         classes=NUM_CLASSES,
     ).to(device)
 
-    criterion = nn.CrossEntropyLoss()
+    criterion = CombinedLoss(mode=loss_mode)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
     run_dir = RUNS_DIR / name
     run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "weights").mkdir(parents=True, exist_ok=True)
 
     best_val_loss = float("inf")
     best_epoch = 0
@@ -171,9 +201,7 @@ def train_once(
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_epoch = epoch
-            weights_dir = run_dir / "weights"
-            weights_dir.mkdir(parents=True, exist_ok=True)
-            torch.save(model.state_dict(), weights_dir / "best.pth")
+            torch.save(model.state_dict(), run_dir / "weights" / "best.pth")
             print(f"  → сохранены веса эпохи {epoch} (val_loss={val_loss:.4f})")
             epochs_without_improvement = 0
         else:
@@ -183,7 +211,7 @@ def train_once(
                 break
 
     (run_dir / "metrics.txt").write_text(
-        f"encoder={encoder}\nimgsz={imgsz}\nbatch={batch}\nlr={lr}\n"
+        f"encoder={encoder}\nimgsz={imgsz}\nbatch={batch}\nlr={lr}\nloss={loss_mode}\n"
         f"best_epoch={best_epoch}\nbest_val_loss={best_val_loss:.6f}\n",
         encoding="utf-8",
     )
@@ -198,9 +226,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--batch", type=int, default=4)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--patience", type=int, default=10, help="ранняя остановка, если val_loss не падает")
-    parser.add_argument("--device", default=DEVICE, help="cuda — видеокарта, cpu — без GPU")
+    parser.add_argument("--device", default=DEVICE)
     parser.add_argument("--workers", type=int, default=0)
     parser.add_argument("--name", default="pathology", help="имя папки прогона в runs/segment")
+    parser.add_argument("--loss", default="ce_dice", choices=["ce", "dice", "ce_dice"],
+                        help="функция потерь: ce (чистый CrossEntropy), dice (чистый Dice), ce_dice (комбинация)")
     return parser.parse_args()
 
 
@@ -213,15 +243,7 @@ def main() -> None:
         )
 
     print(f"Device: {args.device}")
-    if args.device != "cpu" and not torch.cuda.is_available():
-        raise SystemExit(
-            "Видеокарта не видна: в окружении стоит PyTorch без CUDA. "
-            "Переустановите зависимости:\n"
-            r".venv\Scripts\python.exe -m pip install -r requirements.txt"
-        )
-    if args.device != "cpu":
-        print(f"GPU: {torch.cuda.get_device_name(0)}")
-
+    print(f"Loss:   {args.loss}")
     best = train_once(
         encoder=args.encoder,
         imgsz=args.imgsz,
@@ -232,6 +254,7 @@ def main() -> None:
         device=args.device,
         workers=args.workers,
         name=args.name,
+        loss_mode=args.loss,
     )
     if not best.is_file():
         raise SystemExit(f"Обучение закончилось, но файл весов не найден: {best}")
