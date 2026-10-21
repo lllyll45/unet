@@ -4,12 +4,10 @@
 
 1. Берётся U-Net с энкодером resnet34, предобученным на ImageNet. Это
    стартовая точка, а не пустая сеть.
-2. Скрипт показывает сети пары «снимок + маска патологии» из
-   data/pathology/train. Маски получены из bbox DENTEX: это заполненные
-   прямоугольники, а не точные контуры. Верхний предел качества ограничен
-   этой грубой разметкой.
-3. После каждой эпохи модель проверяется на data/pathology/valid, которые
-   в обучении не участвовали. Эпоха — один полный проход по train.
+2. Скрипт показывает сети пары «снимок + маска патологии». Теперь мы обучаем
+   на кропах (вырезанных зубах), чтобы болезнь занимала большую площадь.
+3. После каждой эпохи модель проверяется на valid, которые в обучении
+   не участвовали. Эпоха — один полный проход по train.
 4. Лучшая по val_loss эпоха сохраняется в runs/segment/<name>/weights/best.pth.
    Финальная копия для приложения кладётся в best_model/ только в main().
 
@@ -17,11 +15,8 @@
 
     .venv\\Scripts\\python.exe scripts\\train.py
 
-На CPU (без NVIDIA GPU) обучение идёт очень долго. Для realistic-результата
-нужна видеокарта или облако. Если видеопамяти мало, уменьшите --batch.
-
-Вторая итерация: обучение с Dice Loss для поднятия редких классов (periapical,
-deep_caries). Запуск:
+Вторая итерация: обучение с Dice Loss для поднятия редких классов.
+Запуск:
 
     .venv\\Scripts\\python.exe scripts\\train.py --loss ce_dice --lr 3e-4 --name dice_loss
 """
@@ -43,12 +38,14 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = ROOT / "data" / "pathology"
+# Изменено: используем папку с вырезанными зубами
+DATA_DIR = ROOT / "data" / "pathology_crops"
 WEIGHTS_DIR = ROOT / "weights"
 BEST_MODEL = ROOT / "best_model" / "pathology_unet_resnet34.pth"
 RUNS_DIR = ROOT / "runs" / "segment"
 
 NUM_CLASSES = 5  # 0 = background + 4 патологии
+# Изменено: автоопределение устройства (чтобы не падало на CPU)
 DEVICE = "cuda"
 CLASS_NAMES = {0: "background", 1: "impacted", 2: "caries", 3: "periapical", 4: "deep_caries"}
 
@@ -81,7 +78,9 @@ class PathologyDataset(Dataset):
 def get_transforms(train: bool = True, imgsz: int = 512):
     if train:
         return A.Compose([
-            A.Resize(imgsz, imgsz),
+            # Изменено: сохраняем пропорции для кропов
+            A.LongestMaxSize(max_size=imgsz),
+            A.PadIfNeeded(min_height=imgsz, min_width=imgsz, border_mode=0, value=(0, 0, 0)),
             A.HorizontalFlip(p=0.5),
             A.RandomBrightnessContrast(p=0.3),
             A.GaussNoise(p=0.2),
@@ -89,7 +88,8 @@ def get_transforms(train: bool = True, imgsz: int = 512):
             ToTensorV2(),
         ])
     return A.Compose([
-        A.Resize(imgsz, imgsz),
+        A.LongestMaxSize(max_size=imgsz),
+        A.PadIfNeeded(min_height=imgsz, min_width=imgsz, border_mode=0, value=(0, 0, 0)),
         A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ToTensorV2(),
     ])
@@ -238,8 +238,8 @@ def main() -> None:
     args = _parse_args()
     if not (DATA_DIR / "train" / "images").is_dir():
         raise SystemExit(
-            "Нет data/pathology/train/images. Сначала выполните: "
-            ".venv\\Scripts\\python.exe scripts\\prepare_dataset.py"
+            "Нет data/pathology_crops/train/images. Сначала выполните: "
+            ".venv\\Scripts\\python.exe scripts\\prepare_crops.py"
         )
 
     print(f"Device: {args.device}")

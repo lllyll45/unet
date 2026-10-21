@@ -27,7 +27,8 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 
 ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = ROOT / "data" / "pathology"
+# Изменено: смотрим в кропы
+DATA_DIR = ROOT / "data" / "pathology_crops"
 DEFAULT_WEIGHTS = ROOT / "best_model" / "pathology_unet_resnet34.pth"
 PREVIEW_DIR = ROOT / "runs" / "predict" / "pathology_preview"
 
@@ -42,7 +43,8 @@ class TestDataset(Dataset):
         self.mask_dir = DATA_DIR / "test" / "masks"
         self.files = sorted(self.image_dir.glob("*.jpg"))
         self.transform = A.Compose([
-            A.Resize(imgsz, imgsz),
+            A.LongestMaxSize(max_size=imgsz),
+            A.PadIfNeeded(min_height=imgsz, min_width=imgsz, border_mode=0, value=(0, 0, 0)),
             A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
             ToTensorV2(),
         ])
@@ -106,7 +108,7 @@ def main() -> None:
     if not args.weights.is_file():
         raise SystemExit(f"Нет весов {args.weights}. Сначала запустите scripts/train.py")
     if not (DATA_DIR / "test" / "images").is_dir():
-        raise SystemExit("Нет data/pathology/test/images. Сначала запустите scripts/prepare_dataset.py")
+        raise SystemExit("Нет data/pathology_crops/test/images. Сначала запустите scripts/prepare_crops.py")
 
     model = smp.Unet(
         encoder_name=args.encoder,
@@ -156,8 +158,6 @@ def main() -> None:
             pred = model(tensor).argmax(dim=1).squeeze(0).cpu().numpy().astype(np.uint8)
 
             # Вернуть маску к размеру оригинала.
-            # NEAREST — обязательно: маска содержит id классов (0..4),
-            # BILINEAR дал бы дробные значения, которых нет в палитре.
             pred_img = Image.fromarray(pred).resize(
                 (original.shape[1], original.shape[0]), Image.NEAREST
             )

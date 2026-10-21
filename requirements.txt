@@ -9,3 +9,4 @@ Pillow
 numpy
 tqdm
 opencv-python
+ultralytics
