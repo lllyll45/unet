@@ -3,5 +3,5 @@ imgsz=512
 batch=4
 lr=0.0001
 loss=ce_dice
-best_epoch=20
-best_val_loss=0.624623
+best_epoch=9
+best_val_loss=0.440728
